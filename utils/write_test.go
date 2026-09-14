@@ -182,3 +182,175 @@ func TestExportAccountDoesNotFollowPlantedSymlink(t *testing.T) {
 		t.Errorf("Expected the exported account in %q, got %q", exportDir, exported)
 	}
 }
+
+// TestWriteFilePrivateFollowsDanglingSymlinkChain covers the dangling end of the
+// symlink contract.
+//
+// EvalSymlinks needs the far end to exist, so a chain ending in a file that is
+// not there yet falls through to symlinkTarget's own resolution. Reading a
+// single hop there replaces the next link in the chain with a real file — a
+// dotfile manager's link quietly turned into a copy — where the caller asked to
+// write through it and create the target.
+func TestWriteFilePrivateFollowsDanglingSymlinkChain(t *testing.T) {
+	dir := t.TempDir()
+
+	final := filepath.Join(dir, "final.json")
+	hop3 := filepath.Join(dir, "c.json")
+	hop2 := filepath.Join(dir, "b.json")
+	hop1 := filepath.Join(dir, "a.json")
+
+	// Relative targets, so resolving against the link's own directory is
+	// exercised as well.
+	plantSymlink(t, "final.json", hop3)
+	plantSymlink(t, "c.json", hop2)
+	plantSymlink(t, "b.json", hop1)
+
+	if err := writeFilePrivate(hop1, []byte(`{"chain":true}`), true); err != nil {
+		t.Fatalf("writeFilePrivate: %v", err)
+	}
+
+	content, err := os.ReadFile(final)
+	if err != nil {
+		t.Fatalf("expected the write to create %q: %v", final, err)
+	}
+	if string(content) != `{"chain":true}` {
+		t.Errorf("Expected the data at %q, got %q", final, content)
+	}
+
+	for _, link := range []string{hop1, hop2, hop3} {
+		info, err := os.Lstat(link)
+		if err != nil {
+			t.Fatalf("lstat %q: %v", link, err)
+		}
+		if info.Mode()&os.ModeSymlink == 0 {
+			t.Errorf("Expected %q to survive as a symlink, it was replaced by a real file", link)
+		}
+	}
+}
+
+// TestWriteFilePrivateCleansStaleTempFiles covers the residue a killed process
+// leaves behind. SIGKILL skips the deferred removal in replaceFilePrivate, and
+// for the accounts file the directory in question is $HOME, so a later run has
+// to collect it.
+//
+// The near-misses matter as much as the target: an entry young enough to belong
+// to a write in flight must survive, and so must a directory or an unrelated
+// file that merely shares the prefix.
+func TestWriteFilePrivateCleansStaleTempFiles(t *testing.T) {
+	dir := t.TempDir()
+
+	stale := filepath.Join(dir, tempFilePrefix+"abandoned")
+	if err := os.WriteFile(stale, []byte("half-written"), 0o600); err != nil {
+		t.Fatalf("planting a stale scratch file: %v", err)
+	}
+	aged := time.Now().Add(-2 * tempFileMaxAge)
+	if err := os.Chtimes(stale, aged, aged); err != nil {
+		t.Fatalf("ageing the stale scratch file: %v", err)
+	}
+
+	fresh := filepath.Join(dir, tempFilePrefix+"inflight")
+	if err := os.WriteFile(fresh, []byte("live"), 0o600); err != nil {
+		t.Fatalf("planting a fresh scratch file: %v", err)
+	}
+
+	decoyDir := filepath.Join(dir, tempFilePrefix+"dir")
+	if err := os.Mkdir(decoyDir, 0o700); err != nil {
+		t.Fatalf("planting a directory under the prefix: %v", err)
+	}
+
+	unrelated := filepath.Join(dir, "keep.txt")
+	if err := os.WriteFile(unrelated, []byte("keep"), 0o600); err != nil {
+		t.Fatalf("planting an unrelated file: %v", err)
+	}
+
+	if err := writeFilePrivate(filepath.Join(dir, "target.json"), []byte(`{"ok":true}`), true); err != nil {
+		t.Fatalf("writeFilePrivate: %v", err)
+	}
+
+	if _, err := os.Lstat(stale); !os.IsNotExist(err) {
+		t.Errorf("Expected the stale scratch file to be collected, lstat returned %v", err)
+	}
+	for _, keep := range []string{fresh, decoyDir, unrelated} {
+		if _, err := os.Lstat(keep); err != nil {
+			t.Errorf("Expected %q to be left alone: %v", keep, err)
+		}
+	}
+}
+
+// TestWriteFilePrivateReportsReadOnlyDirectory pins the diagnostic half of the
+// atomic-replace tradeoff: the directory, not the file, is what has to be
+// writable, and the error says so rather than reporting a bare permission
+// failure against a file the user can see is writable.
+//
+// Whether the platform enforces it is asked rather than assumed. Windows puts
+// only a read-only attribute on a directory and a root-owned job bypasses the
+// check, so the test attempts the write and reports when it cannot exercise
+// the case here.
+func TestWriteFilePrivateReportsReadOnlyDirectory(t *testing.T) {
+	dir := t.TempDir()
+
+	target := filepath.Join(dir, "account.json")
+	if err := os.WriteFile(target, []byte(`{"old":true}`), 0o600); err != nil {
+		t.Fatalf("planting the target file: %v", err)
+	}
+
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Skipf("cannot make the directory read-only here: %v", err)
+	}
+	t.Cleanup(func() { os.Chmod(dir, 0o700) })
+
+	err := writeFilePrivate(target, []byte(`{"new":true}`), true)
+	if err == nil {
+		t.Skip("this platform still allows creating files in a read-only directory; the diagnostic cannot be exercised here")
+	}
+
+	if !strings.Contains(err.Error(), dir) {
+		t.Errorf("Expected the error to name the directory %q, got %v", dir, err)
+	}
+	if !strings.Contains(err.Error(), "write permission on that directory") {
+		t.Errorf("Expected the error to explain the directory requirement, got %v", err)
+	}
+}
+
+// TestWriteFilePrivateHardLinkKeepsOldContents pins a documented tradeoff
+// rather than a defect. The write replaces path as a directory entry, so a hard
+// link to the same file under another name keeps the contents it had.
+//
+// Both halves cannot hold at once: writing through the link is an in-place
+// write, which is the thing the atomic replace exists to avoid, and the link
+// count needed to spot the case beforehand lives in a platform-specific stat
+// structure. If this test fails because the write started following hard links,
+// the comment on writeFilePrivate has to change with it.
+func TestWriteFilePrivateHardLinkKeepsOldContents(t *testing.T) {
+	dir := t.TempDir()
+
+	original := filepath.Join(dir, "original.json")
+	if err := os.WriteFile(original, []byte(`{"old":true}`), 0o600); err != nil {
+		t.Fatalf("planting the original file: %v", err)
+	}
+
+	link := filepath.Join(dir, "linked.json")
+	if err := os.Link(original, link); err != nil {
+		t.Skipf("hard links unavailable here: %v", err)
+	}
+
+	if err := writeFilePrivate(link, []byte(`{"new":true}`), true); err != nil {
+		t.Fatalf("writeFilePrivate: %v", err)
+	}
+
+	written, err := os.ReadFile(link)
+	if err != nil {
+		t.Fatalf("reading %q: %v", link, err)
+	}
+	if string(written) != `{"new":true}` {
+		t.Errorf("Expected the write to land at %q, got %q", link, written)
+	}
+
+	sibling, err := os.ReadFile(original)
+	if err != nil {
+		t.Fatalf("reading %q: %v", original, err)
+	}
+	if string(sibling) != `{"old":true}` {
+		t.Errorf("Expected the other name to keep %q, got %q", `{"old":true}`, sibling)
+	}
+}

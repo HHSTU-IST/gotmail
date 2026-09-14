@@ -269,7 +269,11 @@ func run(args []string) int {
 			// Validate export path
 			if err := validateExportPath(exportFolder); err != nil {
 				fmt.Fprintf(os.Stderr, "Invalid export path: %v\n", err)
-				return 1
+				// 2, not 1: an unusable argument is a usage error, the same as
+				// the empty-folder case a few lines above and as the account ID
+				// check in the --id branch. 1 is reserved for failures that come
+				// from doing the work.
+				return 2
 			}
 			if err := mailManager.ExportAccount(exportFolder); err != nil {
 				fmt.Fprintf(os.Stderr, "Error exporting account: %v\n", err)

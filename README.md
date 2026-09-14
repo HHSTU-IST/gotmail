@@ -138,6 +138,8 @@ gotmail export ./backup/folder --id a1b2c3d4e5
 | `help`                      | Show help information                            | `gotmail help`                                 |
 | `help <command>`            | Show detailed help for specific command          | `gotmail help msg`                             |
 
+Colour in the output follows the [`NO_COLOR`](https://no-color.org) convention: any non-empty value turns it off, and an empty value — or a variable that is not set at all — leaves it on.
+
 ## 🔧 Development Guide
 
 ### Requirements
@@ -207,6 +209,18 @@ gotmail export /path/to/backup/ --id a1b2c3d4e5
 ```
 
 The exported file will be an exact copy of the original account data file, preserving all account information and formatting.
+
+### How Credentials Are Written
+
+Every file the program writes — `~/.gotmail.json` and `export` output alike — goes to a scratch file in the same directory and is then renamed into place. That makes the write atomic, so a crash or a power cut cannot leave a half-written accounts file behind, and a symbolic link planted at the destination cannot redirect the write onto a file you happen to be able to write.
+
+Three consequences follow, and they cannot be removed without giving up that atomicity. They are properties of the approach rather than defects:
+
+- **The directory has to be writable**, not just the file. An atomic replace has to create a temporary next to its destination, so a read-only directory fails even when `~/.gotmail.json` itself would accept a write. The error names the directory and explains the requirement.
+- **Hard links are not followed.** The destination is replaced as a directory entry, so after `ln ~/.gotmail.json /backup/gotmail.json` a write updates only the name GoTMail was pointed at; the other name keeps the previous contents. Hard links and atomic replacement are mutually exclusive.
+- **Symbolic links are followed**, which is what a dotfile manager such as stow or chezmoi relies on: the link survives and its target receives the bytes. A dangling link is resolved to its final target — through as many hops as it takes — and that target is created.
+
+The bytes wait in a scratch file named `.gotmail-tmp-*` for the moment between creation and rename. A process killed with `SIGKILL` inside that window leaves one behind, so the scratch file sits next to the account file rather than in a temporary directory, and the next run removes any `.gotmail-tmp-*` file older than an hour. The scratch file is `0600` from the instant it exists, and it holds no more than the write that was already in flight.
 
 ### Rendered Email Cache
 

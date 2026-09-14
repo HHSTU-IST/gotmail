@@ -44,4 +44,10 @@ dist/
 build/
 
 # user data
-*.json
+# The account database, for the case where HOME points at a checkout, and the
+# files `gotmail export` writes, wherever they are written. Spelled out instead
+# of `*.json` so an unrelated JSON file — a report under deliverables/, say —
+# is not silently swallowed; verify any change with `git check-ignore -v`.
+/.gotmail.json
+accounts.json
+account_*.json

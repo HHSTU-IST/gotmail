@@ -2,6 +2,7 @@ package utils_test
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 
@@ -10,6 +11,11 @@ import (
 
 func TestColor(t *testing.T) {
 	fmt.Println("=== Test Color functions ===")
+
+	// Pin NO_COLOR to empty rather than leaving it to the environment: an empty
+	// value means "colour stays on" under the convention, so this states the
+	// assumption the assertions below rest on instead of inheriting it.
+	t.Setenv("NO_COLOR", "")
 
 	color := &utils.Color{}
 
@@ -80,6 +86,9 @@ func TestColor(t *testing.T) {
 func TestColorReset(t *testing.T) {
 	fmt.Println("=== Test color reset functionality ===")
 
+	// See TestColor: the reset suffix only exists while colour is on.
+	t.Setenv("NO_COLOR", "")
+
 	color := &utils.Color{}
 
 	// Test that all functions end with reset code
@@ -101,4 +110,66 @@ func TestColorReset(t *testing.T) {
 	}
 
 	fmt.Println("Color reset functionality test passed!")
+}
+
+// unsetEnv removes name for the duration of the test and restores whatever was
+// there before.
+//
+// testing.T has Setenv but no Unsetenv, and the two are not interchangeable
+// here: colourEnabled has a separate branch for "unset" and for "set to empty",
+// so the test has to be able to reach both.
+func unsetEnv(t *testing.T, name string) {
+	t.Helper()
+
+	previous, present := os.LookupEnv(name)
+	if err := os.Unsetenv(name); err != nil {
+		t.Fatalf("cannot clear %s: %v", name, err)
+	}
+	t.Cleanup(func() {
+		if present {
+			os.Setenv(name, previous)
+			return
+		}
+		os.Unsetenv(name)
+	})
+}
+
+// TestColorHonoursNoColor checks the three states of NO_COLOR separately.
+//
+// The convention disables colour when the variable is present and non-empty, so
+// "set to empty" has to keep colour on. Reading it with Getenv would collapse
+// that case into "unset" and silently ignore a caller who set it to nothing.
+func TestColorHonoursNoColor(t *testing.T) {
+	color := &utils.Color{}
+
+	palette := []struct {
+		name   string
+		method func(string) string
+	}{
+		{"Red", color.Red},
+		{"Green", color.Green},
+		{"Blue", color.Blue},
+		{"Underline", color.Underline},
+	}
+
+	t.Setenv("NO_COLOR", "1")
+	for _, tc := range palette {
+		if got := tc.method("test"); got != "test" {
+			t.Errorf("with NO_COLOR=1, %s returned %q, want the text unchanged", tc.name, got)
+		}
+	}
+
+	t.Setenv("NO_COLOR", "")
+	for _, tc := range palette {
+		if got := tc.method("test"); !strings.Contains(got, "\033[") {
+			t.Errorf("with NO_COLOR empty, %s returned %q, want an ANSI sequence", tc.name, got)
+		}
+	}
+
+	unsetEnv(t, "NO_COLOR")
+	for _, tc := range palette {
+		if got := tc.method("test"); !strings.Contains(got, "\033[") {
+			t.Errorf("with NO_COLOR unset, %s returned %q, want an ANSI sequence", tc.name, got)
+		}
+	}
 }

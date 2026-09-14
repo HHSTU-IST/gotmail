@@ -232,6 +232,8 @@ func (m *MailManager) FetchMessagesByAccountID(accountID string) ([]Message, err
 	}
 
 	if len(messages) == 0 {
+		// \033[K erases the spinner's line rather than colouring anything, so it
+		// is not gated by NO_COLOR. See colorEnabled.
 		fmt.Printf("\r\033[K%s\n", m.color.Red("No Emails"))
 		return nil, nil
 	}
@@ -326,6 +328,8 @@ func (m *MailManager) FetchMessages() ([]Message, error) {
 	}
 
 	if len(messages) == 0 {
+		// \033[K erases the spinner's line rather than colouring anything, so it
+		// is not gated by NO_COLOR. See colorEnabled.
 		fmt.Printf("\r\033[K%s\n", m.color.Red("No Emails"))
 		return nil, nil
 	}
@@ -377,40 +381,6 @@ func (m *MailManager) DeleteAccount() error {
 	}
 
 	fmt.Printf("%s\n", m.color.Blue("Account deleted"))
-	return nil
-}
-
-// ShowDetails shows details for an interactively selected account.
-//
-// NOTE: currently unreachable — `gotmail show` without --id prints every
-// account through GetAllAccountsJSON instead. Kept in sync with FetchMessages
-// so it cannot reintroduce random selection if it is ever wired up again.
-func (m *MailManager) ShowDetails() error {
-	if err := m.db.Read(); err != nil {
-		return fmt.Errorf("failed to read database: %w", err)
-	}
-
-	accounts := m.db.GetData()
-	if len(accounts) == 0 {
-		fmt.Printf("%s\n", m.color.Red("No accounts found"))
-		return nil
-	}
-
-	account, err := SelectAccount(accounts)
-	if err != nil {
-		return err
-	}
-
-	spinner := NewSpinner("fetching details...")
-	spinner.Start()
-	defer spinner.Stop()
-
-	// Use existing account data instead of API call for basic info
-	fmt.Printf("\n    Account ID: %s\n    Email: %s\n    Created: %s\n",
-		m.color.Green(account.ID),
-		m.color.Underline(m.color.Green(account.Address)),
-		m.color.Green(account.CreatedAt.Format("2006-01-02 15:04:05")))
-
 	return nil
 }
 

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -229,5 +230,25 @@ func TestRunHelpResolvesTopicFromPositional(t *testing.T) {
 				t.Errorf("Expected the open topic, got %q", output)
 			}
 		})
+	}
+}
+
+func TestRunExportRejectsMissingParentDirectory(t *testing.T) {
+	// An unusable export path is a usage error, so it has to report 2 like the
+	// empty-folder case and the account ID check, not 1, which is for failures
+	// that come from attempting the work. The check runs before the accounts
+	// file is touched, which keeps this a pure in-process test.
+	missing := filepath.Join(t.TempDir(), "absent", "out")
+
+	var code int
+	output := captureOutput(func() {
+		code = run([]string{"export", missing})
+	})
+
+	if !strings.Contains(output, "Invalid export path") {
+		t.Errorf("Expected 'Invalid export path' message, got %q", output)
+	}
+	if code != 2 {
+		t.Errorf("Expected exit code 2 for an unusable export path, got %d", code)
 	}
 }

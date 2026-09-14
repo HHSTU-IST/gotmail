@@ -146,6 +146,23 @@ func (db *Database) Write() error {
 //     path component the program picks itself, so a link planted in the
 //     destination directory must not be able to redirect the write onto some
 //     other file the user can write to.
+//
+// Two consequences of writing through a temporary file plus a rename are worth
+// recording, because neither can be removed without giving up the atomicity
+// above, and a reader who hits either one should not read it as a defect:
+//
+//   - The directory has to be writable, not just the file being replaced. A
+//     read-only directory therefore fails here even when path itself would
+//     accept a write. replaceFilePrivate says as much in its error, since a
+//     bare "permission denied" against a file the user can see is writable
+//     looks like a bug in this program.
+//   - path is replaced as a directory entry, so a hard link to the same file
+//     under another name keeps the old contents. Hard links and atomic
+//     replacement are mutually exclusive: writing through the link is exactly
+//     the in-place write that the properties above rule out. The link count
+//     also lives in a platform-specific stat structure, so the case cannot even
+//     be detected portably before writing. It is stated here rather than worked
+//     around.
 func writeFilePrivate(path string, data []byte, allowSymlink bool) error {
 	target := path
 	if allowSymlink {
@@ -155,27 +172,51 @@ func writeFilePrivate(path string, data []byte, allowSymlink bool) error {
 }
 
 // symlinkTarget returns the file a write to path should land on, leaving any
-// symlink in place. EvalSymlinks resolves a chain of links but needs the target
-// to exist, so a single Readlink covers a dangling link.
+// symlink in place.
+//
+// EvalSymlinks resolves a chain of links only when the far end exists, so a
+// dangling link is followed one hop at a time instead. Looping rather than
+// reading a single hop matters for a chain whose last link points at nothing:
+// resolving just one hop would leave the second link in the chain to be
+// replaced by a real file, quietly dropping it, where the caller meant to write
+// through it. The hop limit matches the kernel's ELOOP threshold, so a genuine
+// loop stops instead of spinning.
 func symlinkTarget(path string) string {
 	if resolved, err := filepath.EvalSymlinks(path); err == nil {
 		return resolved
 	}
 
-	info, err := os.Lstat(path)
-	if err != nil || info.Mode()&os.ModeSymlink == 0 {
-		return path
-	}
+	const maxHops = 40
+	for hop := 0; hop < maxHops; hop++ {
+		info, err := os.Lstat(path)
+		if err != nil || info.Mode()&os.ModeSymlink == 0 {
+			return path
+		}
 
-	target, err := os.Readlink(path)
-	if err != nil {
-		return path
+		target, err := os.Readlink(path)
+		if err != nil {
+			return path
+		}
+		if !filepath.IsAbs(target) {
+			target = filepath.Join(filepath.Dir(path), target)
+		}
+		path = target
 	}
-	if !filepath.IsAbs(target) {
-		target = filepath.Join(filepath.Dir(path), target)
-	}
-	return target
+	return path
 }
+
+// tempFilePrefix names the scratch file replaceFilePrivate renames into place.
+// A dot prefix keeps it out of a plain directory listing, where it would
+// otherwise appear next to the user's files even when nothing has gone wrong.
+const tempFilePrefix = ".gotmail-tmp-"
+
+// tempFileMaxAge is how old a scratch file must be before a later run treats it
+// as abandoned. The window in which a live scratch file exists is the gap
+// between CreateTemp and Rename — microseconds — so an hour cannot collide with
+// a write in flight while still collecting files left behind by a process that
+// was killed. SIGKILL skips the deferred cleanup below, and for the accounts
+// file the directory in question is $HOME.
+const tempFileMaxAge = time.Hour
 
 // replaceFilePrivate writes data to a fresh file next to path and renames it
 // into place.
@@ -185,9 +226,20 @@ func symlinkTarget(path string) string {
 // itself rather than writing through it. Together they close the window
 // between a check and the write that a plain lstat-then-write would leave open.
 func replaceFilePrivate(path string, data []byte) error {
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".gotmail-tmp-*")
+	dir := filepath.Dir(path)
+
+	// Collect scratch files an earlier run could not clean up. Doing this before
+	// the write rather than after means the sweep also runs on a process that
+	// dies during this very write, which is the case that produces the residue.
+	sweepTempFiles(dir)
+
+	tmp, err := os.CreateTemp(dir, tempFilePrefix+"*")
 	if err != nil {
-		return err
+		// Name the directory and the reason. "permission denied" pointing at a
+		// file the user can write is the confusing half of the tradeoff
+		// documented on writeFilePrivate above.
+		return fmt.Errorf("cannot create a temporary file in %s (replacing %s atomically needs write permission on that directory, not only on the file): %w",
+			dir, path, err)
 	}
 	tmpName := tmp.Name()
 	defer os.Remove(tmpName)
@@ -201,6 +253,37 @@ func replaceFilePrivate(path string, data []byte) error {
 	}
 
 	return os.Rename(tmpName, path)
+}
+
+// sweepTempFiles removes scratch files that an earlier run left in dir after
+// being killed before it could rename or delete them.
+//
+// Best effort on purpose: failing to tidy up must not fail the write that
+// follows, because performing that write is what the caller asked for. An entry
+// qualifies only if its name carries the scratch prefix and it is a regular
+// file of at least tempFileMaxAge, so a directory or a symbolic link planted
+// under that name is skipped — remove would follow neither, but a link that
+// disappears because it happened to match a prefix is still an unwanted
+// surprise, and a directory is not something this program creates.
+func sweepTempFiles(dir string) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+
+	cutoff := time.Now().Add(-tempFileMaxAge)
+	for _, entry := range entries {
+		if !strings.HasPrefix(entry.Name(), tempFilePrefix) {
+			continue
+		}
+
+		info, err := entry.Info()
+		if err != nil || !info.Mode().IsRegular() || info.ModTime().After(cutoff) {
+			continue
+		}
+
+		os.Remove(filepath.Join(dir, entry.Name()))
+	}
 }
 
 // GetData gets all accounts data
@@ -335,24 +418,53 @@ func (s *Spinner) Stop() {
 // Color simple color output functions
 type Color struct{}
 
+// colorEnabled reports whether colour should be emitted.
+//
+// It follows the NO_COLOR convention: colour is off when the variable is
+// present and non-empty. LookupEnv rather than Getenv, because Getenv cannot
+// distinguish "set to nothing" — which by that convention means "leave colour
+// alone" — from "not set at all", and the two call for opposite behaviour.
+//
+// The variable is read per call rather than cached, so a program that sets it
+// after start-up is still obeyed and tests can turn colour off around a single
+// call instead of having to re-exec.
+//
+// Only colour is gated. The cursor and erase sequences the spinner and the
+// "No Emails" line use (\r, \033[K) are terminal control rather than colour, so
+// they are left alone; deciding whether to suppress those is the job of a
+// non-interactive output mode, which NO_COLOR does not describe.
+func colorEnabled() bool {
+	value, ok := os.LookupEnv("NO_COLOR")
+	return !ok || value == ""
+}
+
+// wrap applies an SGR code around text, or returns text untouched when colour
+// is disabled.
+func (c Color) wrap(code string, text string) string {
+	if !colorEnabled() {
+		return text
+	}
+	return fmt.Sprintf("\033[%sm%s\033[0m", code, text)
+}
+
 // Red red output
 func (c Color) Red(text string) string {
-	return fmt.Sprintf("\033[31m%s\033[0m", text)
+	return c.wrap("31", text)
 }
 
 // Green green output
 func (c Color) Green(text string) string {
-	return fmt.Sprintf("\033[32m%s\033[0m", text)
+	return c.wrap("32", text)
 }
 
 // Blue blue output
 func (c Color) Blue(text string) string {
-	return fmt.Sprintf("\033[34m%s\033[0m", text)
+	return c.wrap("34", text)
 }
 
 // Underline underline output
 func (c Color) Underline(text string) string {
-	return fmt.Sprintf("\033[4m%s\033[0m", text)
+	return c.wrap("4", text)
 }
 
 // Helper functions for multi-account management
