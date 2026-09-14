@@ -1,11 +1,11 @@
 package main
 
 import (
-	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 
 	"github.com/ivaquero/gotmail/utils"
 )
@@ -46,13 +46,60 @@ func validateExportPath(path string) error {
 	return nil
 }
 
+// splitArgs separates the --id/-id flag from positional arguments.
+//
+// The flag package stops parsing as soon as it meets the first non-flag
+// argument, so `gotmail open 3 --id abc123` silently dropped --id and acted on
+// the wrong account. Pulling the flag out up front makes its position
+// irrelevant. Unknown flags are still rejected.
+func splitArgs(args []string) (positional []string, accountID string, err error) {
+	for i := 0; i < len(args); i++ {
+		switch arg := args[i]; {
+		case arg == "--":
+			// "--" ends flag parsing: everything after it is positional, which
+			// is how the flag package this replaced behaved.
+			positional = append(positional, args[i+1:]...)
+			return positional, accountID, nil
+		case arg == "--id" || arg == "-id":
+			if i+1 >= len(args) {
+				return nil, "", fmt.Errorf("flag needs an argument: %s", arg)
+			}
+			if args[i+1] == "" {
+				return nil, "", fmt.Errorf("flag needs a non-empty argument: %s", arg)
+			}
+			accountID = args[i+1]
+			i++
+		case strings.HasPrefix(arg, "--id="):
+			accountID = strings.TrimPrefix(arg, "--id=")
+			if accountID == "" {
+				return nil, "", fmt.Errorf("flag needs a non-empty argument: --id")
+			}
+		case strings.HasPrefix(arg, "-id="):
+			accountID = strings.TrimPrefix(arg, "-id=")
+			if accountID == "" {
+				return nil, "", fmt.Errorf("flag needs a non-empty argument: -id")
+			}
+		case len(arg) > 1 && arg[0] == '-':
+			return nil, "", fmt.Errorf("flag provided but not defined: %s", arg)
+		default:
+			positional = append(positional, arg)
+		}
+	}
+	return positional, accountID, nil
+}
+
 func main() {
-	// Get current executable directory
+	os.Exit(run(os.Args[1:]))
+}
+
+// run executes a single gotmail invocation and returns the process exit code:
+// 0 on success, 1 on runtime failure, 2 on usage error.
+func run(args []string) int {
 	// Get user home directory
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: Failed to get home directory: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
 
 	// Set data file path to ~/.gotmail.json
@@ -62,48 +109,39 @@ func main() {
 	mailManager := utils.NewMailManager(dataPath)
 
 	// If no arguments, show help
-	if len(os.Args) < 2 {
+	if len(args) == 0 {
 		utils.ShowHelp()
 		fmt.Println("\nTip: Use 'gotmail help <command>' for detailed command information")
-		return
+		return 0
 	}
 
-	command := os.Args[1]
+	command := args[0]
 
-	// Parse flags
-	var accountID string
-	var hasAccountID bool
-
-	// Create a new flag set for parsing command-specific flags
-	fs := flag.NewFlagSet(command, flag.ContinueOnError)
-	fs.StringVar(&accountID, "id", "", "Account ID for operations")
-
-	// Parse flags from os.Args[2:] (skip command name)
-	if len(os.Args) > 2 {
-		if err := fs.Parse(os.Args[2:]); err != nil {
-			fmt.Printf("Error parsing flags: %v\n", err)
-			utils.ShowHelp()
-			return
-		}
+	// Extract --id before dispatching, so it is honoured no matter where it
+	// sits relative to positional arguments.
+	positional, accountID, err := splitArgs(args[1:])
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error parsing flags: %v\n", err)
+		utils.ShowHelp()
+		return 2
 	}
-
-	if accountID != "" {
-		hasAccountID = true
-	}
+	hasAccountID := accountID != ""
 
 	switch command {
 	case "new":
 		if err := mailManager.CreateAccount(); err != nil {
 			fmt.Fprintf(os.Stderr, "Error creating account: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 		fmt.Println("Account created successfully!")
+		return 0
 
 	case "ls":
 		if err := mailManager.ListAccounts(); err != nil {
 			fmt.Fprintf(os.Stderr, "Error listing accounts: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
+		return 0
 
 	case "msg":
 		var messages []utils.Message
@@ -117,7 +155,7 @@ func main() {
 
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error fetching messages: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 		if messages != nil {
 			if len(messages) == 0 {
@@ -129,117 +167,122 @@ func main() {
 				}
 			}
 		}
+		return 0
 
 	case "del":
 		if hasAccountID {
 			// Validate account ID format
 			if err := validateAccountID(accountID); err != nil {
 				fmt.Fprintf(os.Stderr, "Invalid account ID: %v\n", err)
-				os.Exit(1)
+				return 2
 			}
 			if err := mailManager.DeleteAccountByID(accountID); err != nil {
 				fmt.Fprintf(os.Stderr, "Error deleting account: %v\n", err)
-				os.Exit(1)
+				return 1
 			}
 		} else {
 			if err := mailManager.DeleteAccount(); err != nil {
 				fmt.Fprintf(os.Stderr, "Error deleting account: %v\n", err)
-				os.Exit(1)
+				return 1
 			}
 		}
+		return 0
 
 	case "show":
 		if hasAccountID {
 			// 指定 id 时，显示 accounts.json 中的 id 对应信息
 			if err := mailManager.ShowAccountDetails(accountID); err != nil {
 				fmt.Fprintf(os.Stderr, "Error showing account details: %v\n", err)
-				os.Exit(1)
+				return 1
 			}
 		} else {
 			// 未指定 id 时，打印整个 accounts.json
 			jsonData, err := mailManager.GetAllAccountsJSON()
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error getting accounts JSON: %v\n", err)
-				os.Exit(1)
+				return 1
 			}
 
 			fmt.Println(jsonData)
 			fmt.Println("Account data displayed successfully!")
 		}
+		return 0
 
 	case "open":
-		// Parse remaining arguments for open command
-		var emailNum int
-		remainingArgs := fs.Args()
-
-		if len(remainingArgs) < 1 {
-			fmt.Println("Please provide email number to open")
-			return
+		if len(positional) < 1 {
+			fmt.Fprintf(os.Stderr, "Please provide email number to open\n")
+			fmt.Fprintf(os.Stderr, "💡 Usage: gotmail open <email-number> [--id <account-id>]\n")
+			return 2
 		}
 
-		if _, err := fmt.Sscanf(remainingArgs[0], "%d", &emailNum); err != nil {
+		var emailNum int
+		if _, err := fmt.Sscanf(positional[0], "%d", &emailNum); err != nil {
 			fmt.Fprintf(os.Stderr, "Invalid email number: %v\n", err)
 			fmt.Fprintf(os.Stderr, "💡 Usage: gotmail open <email-number> [--id <account-id>]\n")
-			os.Exit(1)
+			return 2
 		}
 
 		if hasAccountID {
 			// Validate account ID format
 			if err := validateAccountID(accountID); err != nil {
 				fmt.Fprintf(os.Stderr, "Invalid account ID: %v\n", err)
-				os.Exit(1)
+				return 2
 			}
 			if err := mailManager.OpenEmailByAccountID(accountID, emailNum); err != nil {
 				fmt.Fprintf(os.Stderr, "Error opening email: %v\n", err)
-				os.Exit(1)
+				return 1
 			}
 		} else {
 			if err := mailManager.OpenEmail(emailNum); err != nil {
 				fmt.Fprintf(os.Stderr, "Error opening email: %v\n", err)
-				os.Exit(1)
+				return 1
 			}
 		}
+		return 0
 
 	case "export":
-		remainingArgs := fs.Args()
-		if len(remainingArgs) < 1 {
-			fmt.Println("Please provide export folder")
-			return
+		if len(positional) < 1 {
+			fmt.Fprintf(os.Stderr, "Please provide export folder\n")
+			fmt.Fprintf(os.Stderr, "💡 Usage: gotmail export <folder> [--id <account-id>]\n")
+			return 2
 		}
-		exportFolder := remainingArgs[0]
+		exportFolder := positional[0]
 		if hasAccountID {
 			// Validate account ID format
 			if err := validateAccountID(accountID); err != nil {
 				fmt.Fprintf(os.Stderr, "Invalid account ID: %v\n", err)
-				os.Exit(1)
+				return 2
 			}
 			if err := mailManager.ExportAccountByID(accountID, exportFolder); err != nil {
 				fmt.Fprintf(os.Stderr, "Error exporting account: %v\n", err)
-				os.Exit(1)
+				return 1
 			}
 		} else {
 			// Validate export path
 			if err := validateExportPath(exportFolder); err != nil {
 				fmt.Fprintf(os.Stderr, "Invalid export path: %v\n", err)
-				os.Exit(1)
+				return 1
 			}
 			if err := mailManager.ExportAccount(exportFolder); err != nil {
 				fmt.Fprintf(os.Stderr, "Error exporting account: %v\n", err)
-				os.Exit(1)
+				return 1
 			}
 		}
+		return 0
 
 	case "help":
-		if len(os.Args) > 2 {
-			utils.ShowCommandHelp(os.Args[2])
+		if len(args) > 1 {
+			utils.ShowCommandHelp(args[1])
 		} else {
 			utils.ShowHelp()
 		}
+		return 0
 
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n", command)
 		fmt.Fprintf(os.Stderr, "Available commands: new, ls, msg, del, show, open, export, help\n")
 		fmt.Fprintf(os.Stderr, "   Use 'gotmail help' for more information\n")
 		utils.ShowHelp()
+		return 2
 	}
 }

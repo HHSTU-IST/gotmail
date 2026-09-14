@@ -155,7 +155,7 @@ go build
 ### Running Tests
 
 ```bash
-go test ./tests/... -v
+go test ./... -v
 ```
 
 ### Code Standards

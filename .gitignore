@@ -23,12 +23,16 @@ gotmail
 # Data directory
 data/
 
+# Local markdown issue tracker (wayfinder maps, decision tickets)
+.scratch/
+
 # IDE specific files
 .idea/
-.vscode/
 *.swp
 *.swo
 *~
+.workbuddy
+/agents/
 
 # OS specific files
 .DS_Store

@@ -155,7 +155,7 @@ go build
 ### 运行测试
 
 ```bash
-go test ./tests/... -v
+go test ./... -v
 ```
 
 ### 代码规范
