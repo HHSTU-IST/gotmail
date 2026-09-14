@@ -105,6 +105,34 @@ func TestWriteFilePrivateFollowsSymlinkWhenAllowed(t *testing.T) {
 	if info.Mode()&os.ModeSymlink == 0 {
 		t.Errorf("Expected %q to remain a symlink for dotfile managers", link)
 	}
+
+	// The target is replaced rather than written through, so a loose mode on
+	// the previous target is dropped instead of inherited — the property the
+	// old truncate-then-write could not offer.
+	if runtime.GOOS != "windows" {
+		if err := os.Chmod(real, 0o644); err != nil {
+			t.Fatalf("relaxing the link target: %v", err)
+		}
+		if err := writeFilePrivate(link, []byte(`{"third":true}`), true); err != nil {
+			t.Fatalf("writeFilePrivate after relaxing: %v", err)
+		}
+
+		after, err := os.Stat(real)
+		if err != nil {
+			t.Fatalf("stat %q: %v", real, err)
+		}
+		if perm := after.Mode().Perm(); perm != 0o600 {
+			t.Errorf("Expected the link target to come back 0600, got %#o", perm)
+		}
+
+		content, err := os.ReadFile(real)
+		if err != nil {
+			t.Fatalf("reading %q: %v", real, err)
+		}
+		if string(content) != `{"third":true}` {
+			t.Errorf("Expected the third write to land in %q, got %q", real, content)
+		}
+	}
 }
 
 // TestExportAccountDoesNotFollowPlantedSymlink is the end-to-end version of the

@@ -735,7 +735,14 @@ const emailHTMLMaxAge = time.Hour
 func emailCacheDir() (string, error) {
 	base, err := os.UserCacheDir()
 	if err != nil {
-		base = os.TempDir()
+		// Deliberately no fallback to os.TempDir(). That directory is
+		// world-writable, so on a shared machine an attacker could pre-create
+		// the path component used below; because they would own the parent
+		// directory they could then swap the rendered file before the browser
+		// reads it, turning a mail preview into script execution under
+		// file://. A missing cache directory is an environment problem worth
+		// reporting rather than papering over.
+		return "", fmt.Errorf("cannot determine a user cache directory: %w", err)
 	}
 
 	dir := filepath.Join(base, "gotmail", "email")

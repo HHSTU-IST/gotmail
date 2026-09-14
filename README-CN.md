@@ -121,22 +121,22 @@ gotmail export ./备份文件夹 --id a1b2c3d4e5
 
 ## 📖 命令参考
 
-| 命令                        | 描述                         | 示例                                       |
-| --------------------------- | ---------------------------- | ------------------------------------------ |
-| `new`                       | 创建新的临时邮箱账户         | `gotmail new`                              |
-| `ls`                        | 列出所有账户                 | `gotmail ls`                               |
-| `msg`                       | 获取并列出所有邮件           | `gotmail msg`                              |
+| 命令                        | 描述                         | 示例                                           |
+| --------------------------- | ---------------------------- | ---------------------------------------------- |
+| `new`                       | 创建新的临时邮箱账户         | `gotmail new`                                  |
+| `ls`                        | 列出所有账户                 | `gotmail ls`                                   |
+| `msg`                       | 获取并列出所有邮件           | `gotmail msg`                                  |
 | `msg --id <id>`             | 获取指定账户的邮件           | `gotmail msg --id a1b2c3d4e5`                  |
-| `open <number>`             | 在浏览器中打开指定邮件       | `gotmail open 1`                           |
+| `open <number>`             | 在浏览器中打开指定邮件       | `gotmail open 1`                               |
 | `open <number> --id <id>`   | 为指定账户打开指定邮件       | `gotmail open 1 --id a1b2c3d4e5`               |
-| `show`                      | 显示当前账户详情             | `gotmail show`                             |
+| `show`                      | 显示所有账户（JSON 格式）    | `gotmail show`                                 |
 | `show --id <id>`            | 显示指定账户详情             | `gotmail show --id a1b2c3d4e5`                 |
-| `del`                       | 删除当前账户                 | `gotmail del`                              |
+| `del`                       | 删除一个账户（交互选择）     | `gotmail del`                                  |
 | `del --id <id>`             | 删除指定账户                 | `gotmail del --id a1b2c3d4e5`                  |
-| `export <folder>`           | 导出所有账户数据到指定文件夹 | `gotmail export backup/folder`             |
+| `export <folder>`           | 导出所有账户数据到指定文件夹 | `gotmail export backup/folder`                 |
 | `export <folder> --id <id>` | 导出指定账户数据到指定文件夹 | `gotmail export backup/folder --id a1b2c3d4e5` |
-| `help`                      | 显示帮助信息                 | `gotmail help`                             |
-| `help <command>`            | 显示特定命令的详细帮助       | `gotmail help msg`                         |
+| `help`                      | 显示帮助信息                 | `gotmail help`                                 |
+| `help <command>`            | 显示特定命令的详细帮助       | `gotmail help msg`                             |
 
 ## 🔧 开发指南
 
@@ -222,11 +222,11 @@ gotmail export /path/to/backup/ --id a1b2c3d4e5
 GoTMail 现在支持创建和管理多个临时邮箱账户（最多10个）：
 
 1. **创建新账户**：使用 `gotmail new` 创建新账户
-2. **查看所有账户**：使用 `gotmail list` 列出所有已创建的账户
+2. **查看所有账户**：使用 `gotmail ls` 列出所有已创建的账户
 3. **账户特定操作**：大多数命令支持 `--id <account_id>` 参数来指定要操作的账户
 4. **向后兼容**：对于只有一个账户的情况，命令仍然可以不带 `--id` 参数使用
 
-当执行需要账户的操作时，如果存在多个账户，系统会提示您选择要使用的账户。
+需要单个账户的命令（`msg`、`del`、`open`）在存储了多个账户时会提示您选择；只有一个账户时自动使用该账户。`show` 与 `export` 不会提示：`show` 打印所有账户的 JSON，`export` 导出全部账户。
 
 ## 🐛 错误处理
 

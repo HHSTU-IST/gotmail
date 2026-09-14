@@ -1,6 +1,6 @@
 # GoTMail
 
-[![Go Version](https://img.shields.io/badge/go-1.18+-blue.svg)](https://golang.org/doc/go1.18)
+[![Go Version](https://img.shields.io/badge/go-1.27+-blue.svg)](https://golang.org/doc/go1.27)
 [![Go Report Card](https://goreportcard.com/badge/github.com/ivaquero/gotmail)](https://goreportcard.com/report/github.com/ivaquero/gotmail)
 ![code size](https://img.shields.io/github/languages/code-size/ivaquero/gotmail.svg)
 ![repo size](https://img.shields.io/github/repo-size/ivaquero/gotmail.svg)
@@ -42,7 +42,7 @@ brew install gotmail
 
 > After installation, run `xattr -r -d com.apple.quarantine $HOMEBREW_PREFIX/bin/gotmail` to allow execution.
 
-- Alternative method (requires Go 1.18 or higher)
+- Alternative method (requires Go 1.27 or higher, the toolchain CI builds with)
 
 ```bash
 go install github.com/ivaquero/gotmail
@@ -121,22 +121,22 @@ gotmail export ./backup/folder --id a1b2c3d4e5
 
 ## 📖 Command Reference
 
-| Command                     | Description                                      | Example                                    |
-| --------------------------- | ------------------------------------------------ | ------------------------------------------ |
-| `new`                       | Create a new temporary email account             | `gotmail new`                              |
-| `ls`                        | List all accounts                                | `gotmail ls`                               |
-| `msg`                       | Fetch and list all emails                        | `gotmail msg`                              |
+| Command                     | Description                                      | Example                                        |
+| --------------------------- | ------------------------------------------------ | ---------------------------------------------- |
+| `new`                       | Create a new temporary email account             | `gotmail new`                                  |
+| `ls`                        | List all accounts                                | `gotmail ls`                                   |
+| `msg`                       | Fetch and list all emails                        | `gotmail msg`                                  |
 | `msg --id <id>`             | Fetch emails for a specific account              | `gotmail msg --id a1b2c3d4e5`                  |
-| `open <number>`             | Open specified email in browser                  | `gotmail open 1`                           |
+| `open <number>`             | Open specified email in browser                  | `gotmail open 1`                               |
 | `open <number> --id <id>`   | Open specified email for specific account        | `gotmail open 1 --id a1b2c3d4e5`               |
-| `show`                      | Display current account details                  | `gotmail show`                             |
+| `show`                      | Display all accounts in JSON format              | `gotmail show`                                 |
 | `show --id <id>`            | Display specific account details                 | `gotmail show --id a1b2c3d4e5`                 |
-| `del`                       | Delete current account                           | `gotmail del`                              |
+| `del`                       | Delete an account (interactive selection)        | `gotmail del`                                  |
 | `del --id <id>`             | Delete specific account                          | `gotmail del --id a1b2c3d4e5`                  |
-| `export <folder>`           | Export all account data to specified folder      | `gotmail export backup/folder`             |
+| `export <folder>`           | Export all account data to specified folder      | `gotmail export backup/folder`                 |
 | `export <folder> --id <id>` | Export specific account data to specified folder | `gotmail export backup/folder --id a1b2c3d4e5` |
-| `help`                      | Show help information                            | `gotmail help`                             |
-| `help <command>`            | Show detailed help for specific command          | `gotmail help msg`                         |
+| `help`                      | Show help information                            | `gotmail help`                                 |
+| `help <command>`            | Show detailed help for specific command          | `gotmail help msg`                             |
 
 ## 🔧 Development Guide
 
@@ -226,7 +226,7 @@ GoTMail now supports creating and managing multiple temporary email accounts (up
 3. **Account-Specific Operations**: Most commands support the `--id <account_id>` parameter to specify which account to operate on
 4. **Backward Compatibility**: For single-account scenarios, commands can still be used without the `--id` parameter
 
-When performing operations that require an account, if multiple accounts exist, the system will prompt you to select which account to use.
+Commands that operate on a single account — `msg`, `del` and `open` — prompt you to pick one when more than one account is stored; with a single account they use it automatically. `show` and `export` never prompt: `show` prints every account as JSON, and `export` exports them all.
 
 ## 🐛 Error Handling
 

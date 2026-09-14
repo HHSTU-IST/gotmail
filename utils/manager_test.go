@@ -128,6 +128,31 @@ func redirectUserCacheDir(t *testing.T) string {
 	return dir
 }
 
+// TestEmailCacheDirFailsClosedWithoutUserCacheDir covers the fallback that was
+// removed here: rendering used to fall back to os.TempDir(), which is
+// world-writable, so on a shared machine an attacker could pre-create the
+// directory that receives the rendered mail and swap the file before the
+// browser read it.
+func TestEmailCacheDirFailsClosedWithoutUserCacheDir(t *testing.T) {
+	switch runtime.GOOS {
+	case "windows":
+		t.Setenv("LocalAppData", "")
+	case "darwin":
+		t.Setenv("HOME", "")
+	default:
+		t.Setenv("XDG_CACHE_HOME", "")
+		t.Setenv("HOME", "")
+	}
+
+	if _, err := os.UserCacheDir(); err == nil {
+		t.Skip("os.UserCacheDir still resolves here, so the failure path is unreachable")
+	}
+
+	if _, err := emailCacheDir(); err == nil {
+		t.Error("emailCacheDir must report an error rather than fall back to a world-writable directory")
+	}
+}
+
 // TestWriteEmailHTMLLivesInUserCacheDir covers P1-4: the rendered email used to
 // be written to <executable dir>/../data/email.html, which fails outright when
 // the install prefix is read-only (for example a Homebrew binary in

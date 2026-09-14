@@ -7,7 +7,6 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"time"
 )
@@ -113,9 +112,11 @@ func (db *Database) Write() error {
 		return fmt.Errorf("failed to marshal accounts data: %w", err)
 	}
 
-	// Ensure directory exists
+	// Ensure directory exists. It holds credentials, so a directory this
+	// program creates is owner-only. MkdirAll leaves an existing directory's
+	// mode alone, so this only applies when it actually creates one.
 	dir := filepath.Dir(db.dataPath)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0700); err != nil {
 		return fmt.Errorf("failed to create directory: %w", err)
 	}
 
@@ -126,53 +127,54 @@ func (db *Database) Write() error {
 	return nil
 }
 
-// writeFilePrivate writes data with owner-only permissions (0600).
+// writeFilePrivate writes data to path with owner-only permissions (0600).
 //
-// os.WriteFile applies perm only when it creates the file, so a file that
-// already exists as world-readable would silently keep its mode; the explicit
-// chmod afterwards tightens those too. The accounts file holds plaintext
-// passwords and JWTs, so it must not stay readable by other users of the
-// machine.
+// Both modes go through replaceFilePrivate, so the bytes land in a fresh file
+// that is created 0600 and then renamed into place. That buys two properties at
+// once: os.WriteFile applies perm only when it creates a file, so writing in
+// place would leave a pre-existing world-readable file readable, and a rename
+// is atomic, so a crash part-way through cannot leave a truncated accounts file
+// behind. The accounts file holds plaintext passwords and JWTs.
 //
 // allowSymlink decides what happens when path is a symbolic link:
 //
-//   - true  — follow it. Used for ~/.gotmail.json, because dotfile managers
-//     (stow, chezmoi) legitimately symlink a dotfile into place and replacing
-//     the link with a real file would quietly break that setup.
-//   - false — write through a fresh file instead. Used for export files, whose
-//     final path component the program picks itself, so a link planted in the
+//   - true  — write to the link's target and leave the link alone. Used for
+//     ~/.gotmail.json, because dotfile managers (stow, chezmoi) legitimately
+//     symlink a dotfile into place and replacing the link with a real file
+//     would quietly break that setup.
+//   - false — replace whatever sits at path. Used for export files, whose final
+//     path component the program picks itself, so a link planted in the
 //     destination directory must not be able to redirect the write onto some
 //     other file the user can write to.
-//
-// chmod failure is only fatal while the file is still group- or
-// world-readable, so filesystems that cannot store POSIX modes (exFAT, some
-// network shares) do not turn a successful write into a reported failure.
 func writeFilePrivate(path string, data []byte, allowSymlink bool) error {
-	if !allowSymlink {
-		if err := replaceFilePrivate(path, data); err != nil {
-			return err
-		}
-		return nil
+	target := path
+	if allowSymlink {
+		target = symlinkTarget(path)
+	}
+	return replaceFilePrivate(target, data)
+}
+
+// symlinkTarget returns the file a write to path should land on, leaving any
+// symlink in place. EvalSymlinks resolves a chain of links but needs the target
+// to exist, so a single Readlink covers a dangling link.
+func symlinkTarget(path string) string {
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		return resolved
 	}
 
-	if err := os.WriteFile(path, data, 0600); err != nil {
-		return err
+	info, err := os.Lstat(path)
+	if err != nil || info.Mode()&os.ModeSymlink == 0 {
+		return path
 	}
 
-	// Windows has no POSIX mode bits; os.Chmod there only toggles the
-	// read-only attribute, which is not what this function is about.
-	if runtime.GOOS == "windows" {
-		return nil
+	target, err := os.Readlink(path)
+	if err != nil {
+		return path
 	}
-
-	if err := os.Chmod(path, 0600); err != nil {
-		info, statErr := os.Stat(path)
-		if statErr == nil && info.Mode().Perm()&0o077 != 0 {
-			return fmt.Errorf("failed to restrict permissions on %s (mode %#o): %w", path, info.Mode().Perm(), err)
-		}
-		fmt.Fprintf(os.Stderr, "Warning: could not restrict permissions on %s: %v\n", path, err)
+	if !filepath.IsAbs(target) {
+		target = filepath.Join(filepath.Dir(path), target)
 	}
-	return nil
+	return target
 }
 
 // replaceFilePrivate writes data to a fresh file next to path and renames it
