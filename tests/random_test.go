@@ -12,7 +12,10 @@ func TestGenerateRandomString(t *testing.T) {
 
 	// Generate multiple random strings to verify functionality
 	for i := 0; i < 5; i++ {
-		randomStr := utils.GenerateRandomString(10)
+		randomStr, err := utils.GenerateRandomString(10)
+		if err != nil {
+			t.Fatalf("GenerateRandomString(10) returned an error: %v", err)
+		}
 		fmt.Printf("Random string %d: %s\n", i+1, randomStr)
 
 		// Verify string length
@@ -36,5 +39,31 @@ func TestGenerateRandomString(t *testing.T) {
 		}
 	}
 
+	// A collapsed generator would still pass the length and charset checks
+	// above -- the old deterministic fallback returned "abcdefghij" every
+	// single time -- so require two draws to differ as well.
+	first, err := utils.GenerateRandomString(10)
+	if err != nil {
+		t.Fatalf("GenerateRandomString(10) returned an error: %v", err)
+	}
+	second, err := utils.GenerateRandomString(10)
+	if err != nil {
+		t.Fatalf("GenerateRandomString(10) returned an error: %v", err)
+	}
+	if first == second {
+		t.Errorf("Two consecutive draws are identical (%q); randomness has collapsed", first)
+	}
+
 	fmt.Println("\n=== Test completed ===")
+}
+
+// TestGenerateRandomStringRejectsNonPositiveLength covers B-2: this function
+// mints account passwords, so a bad length must fail loudly instead of
+// yielding an empty password (length 0) or panicking inside make() (negative).
+func TestGenerateRandomStringRejectsNonPositiveLength(t *testing.T) {
+	for _, length := range []int{0, -1} {
+		if _, err := utils.GenerateRandomString(length); err == nil {
+			t.Errorf("Expected an error for length %d, got nil", length)
+		}
+	}
 }

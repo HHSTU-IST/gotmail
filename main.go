@@ -148,6 +148,10 @@ func run(args []string) int {
 		var err error
 
 		if hasAccountID {
+			if err := validateAccountID(accountID); err != nil {
+				fmt.Fprintf(os.Stderr, "Invalid account ID: %v\n", err)
+				return 2
+			}
 			messages, err = mailManager.FetchMessagesByAccountID(accountID)
 		} else {
 			messages, err = mailManager.FetchMessages()
@@ -191,6 +195,10 @@ func run(args []string) int {
 	case "show":
 		if hasAccountID {
 			// 指定 id 时，显示 accounts.json 中的 id 对应信息
+			if err := validateAccountID(accountID); err != nil {
+				fmt.Fprintf(os.Stderr, "Invalid account ID: %v\n", err)
+				return 2
+			}
 			if err := mailManager.ShowAccountDetails(accountID); err != nil {
 				fmt.Fprintf(os.Stderr, "Error showing account details: %v\n", err)
 				return 1
@@ -271,8 +279,8 @@ func run(args []string) int {
 		return 0
 
 	case "help":
-		if len(args) > 1 {
-			utils.ShowCommandHelp(args[1])
+		if len(positional) > 0 {
+			utils.ShowCommandHelp(positional[0])
 		} else {
 			utils.ShowHelp()
 		}

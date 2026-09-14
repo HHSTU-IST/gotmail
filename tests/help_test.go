@@ -95,9 +95,9 @@ func TestShowCommandHelp(t *testing.T) {
 				"Fetch and list messages",
 				"gotmail msg",
 				"--id <account_id>",
-				"Fetch from default account",
+				"Pick an account interactively",
 			},
-			unexpectedContents: []string{"Unknown command"},
+			unexpectedContents: []string{"Unknown command", "default account"},
 		},
 		{
 			command: "del",
@@ -105,9 +105,9 @@ func TestShowCommandHelp(t *testing.T) {
 				"Delete account",
 				"gotmail del",
 				"--id <account_id>",
-				"Delete default account",
+				"Pick an account interactively",
 			},
-			unexpectedContents: []string{"Unknown command"},
+			unexpectedContents: []string{"Unknown command", "default account"},
 		},
 		{
 			command: "show",
@@ -125,9 +125,9 @@ func TestShowCommandHelp(t *testing.T) {
 				"Open specific email in browser",
 				"gotmail open <number>",
 				"--id <account_id>",
-				"Open first message",
+				"Pick an account, open its first message",
 			},
-			unexpectedContents: []string{"Unknown command"},
+			unexpectedContents: []string{"Unknown command", "default account"},
 		},
 		{
 			command: "export",
@@ -218,4 +218,58 @@ func TestHelpFunctionsOutput(t *testing.T) {
 	}
 
 	fmt.Println("Help functions output format test passed!")
+}
+
+// TestHelpExamplesUseUsableAccountIDs guards a defect found in review: every
+// example ID in the help text was "abc123", which the CLI itself rejects.
+// validateAccountID (main.go:14) requires 10-50 alphanumeric characters, so an
+// example that fails it is worse than no example at all.
+func TestHelpExamplesUseUsableAccountIDs(t *testing.T) {
+	fmt.Println("=== Test help examples use usable account IDs ===")
+
+	commands := []string{"new", "ls", "msg", "del", "show", "open", "export", "help"}
+	for _, command := range commands {
+		output := captureOutput(func() {
+			utils.ShowCommandHelp(command)
+		})
+
+		for _, line := range strings.Split(output, "\n") {
+			// Only invocation lines are examples. Prose such as "When --id is
+			// omitted" also mentions --id but carries no example value.
+			trimmed := strings.TrimSpace(line)
+			if !strings.HasPrefix(trimmed, "gotmail ") {
+				continue
+			}
+
+			idx := strings.Index(line, "--id ")
+			if idx < 0 {
+				continue
+			}
+
+			// The value runs to end of line or to the first explanatory comment.
+			value := strings.TrimSpace(line[idx+len("--id "):])
+			if cut := strings.Index(value, " "); cut >= 0 {
+				value = value[:cut]
+			}
+
+			// Usage lines document the placeholder rather than a concrete value.
+			if strings.HasPrefix(value, "<") {
+				continue
+			}
+
+			if len(value) < 10 || len(value) > 50 {
+				t.Errorf("gotmail help %s: example ID %q is %d characters, the CLI requires 10-50",
+					command, value, len(value))
+			}
+			for _, r := range value {
+				if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')) {
+					t.Errorf("gotmail help %s: example ID %q contains %q, the CLI allows letters and digits only",
+						command, value, r)
+					break
+				}
+			}
+		}
+	}
+
+	fmt.Println("Help example account ID test passed!")
 }

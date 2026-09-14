@@ -17,7 +17,7 @@ func ShowHelp() {
 	fmt.Println("  export <folder> [--id <id>]   Export account data to specified folder")
 	fmt.Println("  help                          Show this help message")
 	fmt.Println("\nOptions:")
-	fmt.Println("  --id <id>                     Specify account ID for operations")
+	fmt.Println("  --id <id>                     Specify account ID (10-50 letters and digits)")
 }
 
 // ShowCommandHelp displays detailed help for specific command
@@ -43,20 +43,22 @@ func ShowCommandHelp(command string) {
 		fmt.Println("\nUsage:")
 		fmt.Println("  gotmail msg [--id <account_id>]")
 		fmt.Println("\nDescription:")
-		fmt.Println("  Retrieves messages from the specified account or the default account")
+		fmt.Println("  Retrieves messages from the specified account")
+		fmt.Println("  When --id is omitted, prompts you to pick one of the stored accounts")
 		fmt.Println("\nExamples:")
-		fmt.Println("  gotmail msg                    # Fetch from default account")
-		fmt.Println("  gotmail msg --id abc123        # Fetch from specific account")
+		fmt.Println("  gotmail msg                    # Pick an account interactively")
+		fmt.Println("  gotmail msg --id a1b2c3d4e5    # Fetch from a specific account")
 
 	case "del":
 		fmt.Println("Delete account")
 		fmt.Println("\nUsage:")
 		fmt.Println("  gotmail del [--id <account_id>]")
 		fmt.Println("\nDescription:")
-		fmt.Println("  Removes the specified account or the default account from storage")
+		fmt.Println("  Removes the specified account from storage")
+		fmt.Println("  When --id is omitted, prompts you to pick one of the stored accounts")
 		fmt.Println("\nExamples:")
-		fmt.Println("  gotmail del                    # Delete default account")
-		fmt.Println("  gotmail del --id abc123        # Delete specific account")
+		fmt.Println("  gotmail del                    # Pick an account interactively")
+		fmt.Println("  gotmail del --id a1b2c3d4e5    # Delete a specific account")
 
 	case "show":
 		fmt.Println("Show account details or all accounts")
@@ -67,7 +69,7 @@ func ShowCommandHelp(command string) {
 		fmt.Println("  When --id is not specified, shows all accounts data in JSON format")
 		fmt.Println("\nExamples:")
 		fmt.Println("  gotmail show                   # Show all accounts in JSON format")
-		fmt.Println("  gotmail show --id abc123       # Show specific account details")
+		fmt.Println("  gotmail show --id a1b2c3d4e5   # Show specific account details")
 
 	case "open":
 		fmt.Println("Open specific email in browser")
@@ -75,9 +77,14 @@ func ShowCommandHelp(command string) {
 		fmt.Println("  gotmail open <number> [--id <account_id>]")
 		fmt.Println("\nDescription:")
 		fmt.Println("  Opens the specified email message in your default web browser")
+		fmt.Println("  When --id is omitted, prompts you to pick one of the stored accounts")
+		fmt.Println("  The message is rendered to an HTML file under the user cache directory")
+		fmt.Println("  (<cache>/gotmail/email). Renders older than an hour are removed on the")
+		fmt.Println("  next open, but the file is not deleted while the browser may still be")
+		fmt.Println("  reading it. The HTML comes from the sender, so treat it as untrusted.")
 		fmt.Println("\nExamples:")
-		fmt.Println("  gotmail open 1                 # Open first message from default account")
-		fmt.Println("  gotmail open 3 --id abc123     # Open third message from specific account")
+		fmt.Println("  gotmail open 1                 # Pick an account, open its first message")
+		fmt.Println("  gotmail open 3 --id a1b2c3d4e5 # Open message 3 of a specific account")
 
 	case "export":
 		fmt.Println("Export account data to specified folder")
@@ -85,9 +92,12 @@ func ShowCommandHelp(command string) {
 		fmt.Println("  gotmail export <folder> [--id <account_id>]")
 		fmt.Println("\nDescription:")
 		fmt.Println("  Exports account data to the specified folder")
+		fmt.Println("  When --id is omitted, exports every stored account")
+		fmt.Println("  The export holds plaintext passwords and tokens; it is written")
+		fmt.Println("  owner-only (0600), and a directory this command creates is 0700")
 		fmt.Println("\nExamples:")
-		fmt.Println("  gotmail export /tmp/backup          # Export default account")
-		fmt.Println("  gotmail export /tmp/backup --id abc123 # Export specific account")
+		fmt.Println("  gotmail export /tmp/backup                 # Export all accounts")
+		fmt.Println("  gotmail export /tmp/backup --id a1b2c3d4e5 # Export one account")
 
 	case "help":
 		fmt.Println("Show help information")

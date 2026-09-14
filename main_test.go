@@ -183,18 +183,51 @@ func TestSplitArgs(t *testing.T) {
 }
 
 func TestRunWithMalformedAccountID(t *testing.T) {
-	var code int
-	output := captureOutput(func() {
-		// "zz" is rejected by validateAccountID before any file access, so this
-		// stays a pure in-process check.
-		code = run([]string{"del", "--id", "zz"})
-	})
-
-	if !strings.Contains(output, "Invalid account ID") {
-		t.Errorf("Expected 'Invalid account ID' message, got %q", output)
+	// "zz" is rejected by validateAccountID before any file or network access,
+	// so every case stays a pure in-process check.
+	cases := map[string][]string{
+		"del":    {"del", "--id", "zz"},
+		"open":   {"open", "1", "--id", "zz"},
+		"export": {"export", "some-folder", "--id", "zz"},
+		"show":   {"show", "--id", "zz"},
+		"msg":    {"msg", "--id", "zz"},
 	}
 
-	if code != 2 {
-		t.Errorf("Expected exit code 2 for a malformed account ID, got %d", code)
+	for name, args := range cases {
+		t.Run(name, func(t *testing.T) {
+			var code int
+			output := captureOutput(func() {
+				code = run(args)
+			})
+
+			if !strings.Contains(output, "Invalid account ID") {
+				t.Errorf("Expected 'Invalid account ID' message, got %q", output)
+			}
+
+			if code != 2 {
+				t.Errorf("Expected exit code 2 for a malformed account ID, got %d", code)
+			}
+		})
+	}
+}
+
+func TestRunHelpResolvesTopicFromPositional(t *testing.T) {
+	// The help topic must be read from the parsed positional arguments rather
+	// than the raw argv, otherwise "help -- open" resolves the topic to "--".
+	for _, args := range [][]string{{"help", "open"}, {"help", "--", "open"}} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			var code int
+			output := captureOutput(func() {
+				code = run(args)
+			})
+
+			if code != 0 {
+				t.Errorf("Expected exit code 0, got %d", code)
+			}
+
+			if strings.Contains(output, "Unknown command") {
+				t.Errorf("Expected the open topic, got %q", output)
+			}
+		})
 	}
 }

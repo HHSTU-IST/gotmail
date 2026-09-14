@@ -104,19 +104,19 @@ For multi-account scenarios, most commands support the `--id` parameter to speci
 
 ```bash
 # View emails for a specific account
-gotmail msg --id abc123
+gotmail msg --id a1b2c3d4e5
 
 # View details for a specific account
-gotmail show --id abc123
+gotmail show --id a1b2c3d4e5
 
 # Delete a specific account
-gotmail del --id abc123
+gotmail del --id a1b2c3d4e5
 
 # Open specific email from specific account
-gotmail open 1 --id abc123
+gotmail open 1 --id a1b2c3d4e5
 
 # Export specific account data
-gotmail export ./backup/folder --id abc123
+gotmail export ./backup/folder --id a1b2c3d4e5
 ```
 
 ## 📖 Command Reference
@@ -126,15 +126,15 @@ gotmail export ./backup/folder --id abc123
 | `new`                       | Create a new temporary email account             | `gotmail new`                              |
 | `ls`                        | List all accounts                                | `gotmail ls`                               |
 | `msg`                       | Fetch and list all emails                        | `gotmail msg`                              |
-| `msg --id <id>`             | Fetch emails for a specific account              | `gotmail msg --id abc123`                  |
+| `msg --id <id>`             | Fetch emails for a specific account              | `gotmail msg --id a1b2c3d4e5`                  |
 | `open <number>`             | Open specified email in browser                  | `gotmail open 1`                           |
-| `open <number> --id <id>`   | Open specified email for specific account        | `gotmail open 1 --id abc123`               |
+| `open <number> --id <id>`   | Open specified email for specific account        | `gotmail open 1 --id a1b2c3d4e5`               |
 | `show`                      | Display current account details                  | `gotmail show`                             |
-| `show --id <id>`            | Display specific account details                 | `gotmail show --id abc123`                 |
+| `show --id <id>`            | Display specific account details                 | `gotmail show --id a1b2c3d4e5`                 |
 | `del`                       | Delete current account                           | `gotmail del`                              |
-| `del --id <id>`             | Delete specific account                          | `gotmail del --id abc123`                  |
+| `del --id <id>`             | Delete specific account                          | `gotmail del --id a1b2c3d4e5`                  |
 | `export <folder>`           | Export all account data to specified folder      | `gotmail export backup/folder`             |
-| `export <folder> --id <id>` | Export specific account data to specified folder | `gotmail export backup/folder --id abc123` |
+| `export <folder> --id <id>` | Export specific account data to specified folder | `gotmail export backup/folder --id a1b2c3d4e5` |
 | `help`                      | Show help information                            | `gotmail help`                             |
 | `help <command>`            | Show detailed help for specific command          | `gotmail help msg`                         |
 
@@ -142,7 +142,7 @@ gotmail export ./backup/folder --id abc123
 
 ### Requirements
 
-- Go 1.18 or higher
+- Go 1.27 or higher (`go.mod` still declares `go 1.18` as the language floor)
 
 ### Building the Project
 
@@ -168,7 +168,9 @@ go test ./... -v
 ## 🔒 Security Features
 
 - **Cryptographic Random Generation**: Use `crypto/rand` to generate secure random strings
-- **Error Fallback Mechanism**: Provide fallback solutions when cryptographic random generation fails
+- **Fail-Closed Random Generation**: Abort with an error instead of falling back to a predictable sequence when `crypto/rand` fails
+- **Owner-Only File Permissions**: Account data and exports are written `0600`; directories the program creates are `0700`
+- **Symlink-Safe Writes**: Exports and cached email HTML are written to a fresh file and renamed into place, so a symbolic link planted at the destination cannot redirect the write
 - **Input Validation**: Validate API responses and user inputs
 - **Secure Data Storage**: Store account data securely in JSON format
 
@@ -201,10 +203,19 @@ gotmail export /path/to/backup/
 Or export data for a specific account:
 
 ```bash
-gotmail export /path/to/backup/ --id abc123
+gotmail export /path/to/backup/ --id a1b2c3d4e5
 ```
 
 The exported file will be an exact copy of the original account data file, preserving all account information and formatting.
+
+### Rendered Email Cache
+
+`gotmail open` hands the message to your browser as a file rather than piping it, so each render is written to the user cache directory:
+
+- **Directory**: `<user cache dir>/gotmail/email` — `~/.cache/gotmail/email` on Linux, `~/Library/Caches/gotmail/email` on macOS, `%LocalAppData%\gotmail\email` on Windows
+- **Permissions**: `0600`, and every render gets its own file so a second `open` cannot overwrite what the browser is still displaying
+- **Retention**: renders older than one hour are removed the next time you run `open`. The file is not deleted right after the browser is launched, because that launch is asynchronous and deleting it would race the viewer
+- **Caution**: the HTML is authored by whoever sent the email. Treat the cached file as untrusted content, and delete it yourself if you want it gone before the next cleanup
 
 ### Multi-Account Management
 

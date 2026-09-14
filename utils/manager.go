@@ -57,8 +57,16 @@ func (m *MailManager) CreateAccount() error {
 	}
 
 	// Generate random email and password
-	email := fmt.Sprintf("%s@%s", GenerateRandomString(7), domain)
-	password := GenerateRandomString(10)
+	emailLocalPart, err := GenerateRandomString(7)
+	if err != nil {
+		return fmt.Errorf("failed to generate email address: %w", err)
+	}
+	email := fmt.Sprintf("%s@%s", emailLocalPart, domain)
+
+	password, err := GenerateRandomString(10)
+	if err != nil {
+		return fmt.Errorf("failed to generate password: %w", err)
+	}
 
 	// Create account
 	accountID, err := m.createAccountAPI(email, password)
@@ -109,8 +117,9 @@ func (m *MailManager) ExportAccount(exportFolder string) error {
 		return fmt.Errorf("no accounts found")
 	}
 
-	// Ensure export directory exists
-	if err := os.MkdirAll(exportFolder, 0755); err != nil {
+	// Ensure export directory exists. The export holds plaintext credentials,
+	// so a directory this program creates defaults to owner-only too.
+	if err := os.MkdirAll(exportFolder, 0700); err != nil {
 		return fmt.Errorf("failed to create export directory: %w", err)
 	}
 
@@ -123,7 +132,7 @@ func (m *MailManager) ExportAccount(exportFolder string) error {
 	}
 
 	// Write to export path
-	if err := os.WriteFile(exportPath, originalData, 0644); err != nil {
+	if err := writeFilePrivate(exportPath, originalData, false); err != nil {
 		return fmt.Errorf("failed to write export file: %w", err)
 	}
 
@@ -142,8 +151,9 @@ func (m *MailManager) ExportAccountByID(accountID string, exportFolder string) e
 		return fmt.Errorf("account with ID %s not found", accountID)
 	}
 
-	// Ensure export directory exists
-	if err := os.MkdirAll(exportFolder, 0755); err != nil {
+	// Ensure export directory exists. The export holds plaintext credentials,
+	// so a directory this program creates defaults to owner-only too.
+	if err := os.MkdirAll(exportFolder, 0700); err != nil {
 		return fmt.Errorf("failed to create export directory: %w", err)
 	}
 
@@ -157,7 +167,7 @@ func (m *MailManager) ExportAccountByID(accountID string, exportFolder string) e
 	}
 
 	// Write to export path
-	if err := os.WriteFile(exportPath, exportData, 0644); err != nil {
+	if err := writeFilePrivate(exportPath, exportData, false); err != nil {
 		return fmt.Errorf("failed to write export file: %w", err)
 	}
 
@@ -284,12 +294,9 @@ func (m *MailManager) DeleteAccountByID(accountID string) error {
 	return nil
 }
 
-// FetchMessages fetches email messages for the first account (backward compatibility)
+// FetchMessages fetches email messages for an interactively selected account
+// when --id is not given.
 func (m *MailManager) FetchMessages() ([]Message, error) {
-	spinner := NewSpinner("fetching...")
-	spinner.Start()
-	defer spinner.Stop()
-
 	if err := m.db.Read(); err != nil {
 		return nil, fmt.Errorf("failed to read database: %w", err)
 	}
@@ -300,12 +307,18 @@ func (m *MailManager) FetchMessages() ([]Message, error) {
 		return nil, nil
 	}
 
-	// Get first account for backward compatibility
-	var account *Account
-	for _, acc := range accounts {
-		account = acc
-		break
+	// Ask which account to use. Taking the first value a map iteration yields
+	// is taking one at random, which used to send the request to an arbitrary
+	// account. Selection runs before the spinner starts so the prompt is not
+	// overwritten by the animation.
+	account, err := SelectAccount(accounts)
+	if err != nil {
+		return nil, err
 	}
+
+	spinner := NewSpinner("fetching...")
+	spinner.Start()
+	defer spinner.Stop()
 
 	messages, err := m.fetchMessagesAPI(account.Token.Token)
 	if err != nil {
@@ -367,12 +380,12 @@ func (m *MailManager) DeleteAccount() error {
 	return nil
 }
 
-// ShowDetails shows account details (backward compatibility - shows first account)
+// ShowDetails shows details for an interactively selected account.
+//
+// NOTE: currently unreachable — `gotmail show` without --id prints every
+// account through GetAllAccountsJSON instead. Kept in sync with FetchMessages
+// so it cannot reintroduce random selection if it is ever wired up again.
 func (m *MailManager) ShowDetails() error {
-	spinner := NewSpinner("fetching details...")
-	spinner.Start()
-	defer spinner.Stop()
-
 	if err := m.db.Read(); err != nil {
 		return fmt.Errorf("failed to read database: %w", err)
 	}
@@ -383,12 +396,14 @@ func (m *MailManager) ShowDetails() error {
 		return nil
 	}
 
-	// Get first account for backward compatibility
-	var account *Account
-	for _, acc := range accounts {
-		account = acc
-		break
+	account, err := SelectAccount(accounts)
+	if err != nil {
+		return err
 	}
+
+	spinner := NewSpinner("fetching details...")
+	spinner.Start()
+	defer spinner.Stop()
 
 	// Use existing account data instead of API call for basic info
 	fmt.Printf("\n    Account ID: %s\n    Email: %s\n    Created: %s\n",
@@ -399,13 +414,9 @@ func (m *MailManager) ShowDetails() error {
 	return nil
 }
 
-// OpenEmail opens specified email (backward compatibility - uses first account)
+// OpenEmail opens a specified email for an interactively selected account when
+// --id is not given.
 func (m *MailManager) OpenEmail(emailIndex int) error {
-	emailFilePath := filepath.Join(getCurrentDir(), "../data/email.html")
-	spinner := NewSpinner("opening...")
-	spinner.Start()
-	defer spinner.Stop()
-
 	if err := m.db.Read(); err != nil {
 		return fmt.Errorf("failed to read database: %w", err)
 	}
@@ -415,12 +426,16 @@ func (m *MailManager) OpenEmail(emailIndex int) error {
 		return fmt.Errorf("no accounts found")
 	}
 
-	// Get first account for backward compatibility
-	var account *Account
-	for _, acc := range accounts {
-		account = acc
-		break
+	// Same reasoning as FetchMessages: without --id the account must be chosen
+	// deliberately, not taken from a random map iteration.
+	account, err := SelectAccount(accounts)
+	if err != nil {
+		return err
 	}
+
+	spinner := NewSpinner("opening...")
+	spinner.Start()
+	defer spinner.Stop()
 
 	messages, err := m.fetchMessagesAPI(account.Token.Token)
 	if err != nil {
@@ -442,13 +457,10 @@ func (m *MailManager) OpenEmail(emailIndex int) error {
 		return nil
 	}
 
-	// Write HTML file
-	dir := filepath.Dir(emailFilePath)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("failed to create directory: %w", err)
-	}
-
-	if err := os.WriteFile(emailFilePath, []byte(emailDetail.HTML[0]), 0644); err != nil {
+	// Write HTML file. Every render gets a fresh 0600 file in the user cache
+	// directory; see writeEmailHTML for why it is not deleted afterwards.
+	emailFilePath, err := writeEmailHTML(emailDetail.HTML[0])
+	if err != nil {
 		return fmt.Errorf("failed to write email file: %w", err)
 	}
 
@@ -462,11 +474,6 @@ func (m *MailManager) OpenEmail(emailIndex int) error {
 
 // OpenEmailByAccountID opens specified email for specific account
 func (m *MailManager) OpenEmailByAccountID(accountID string, emailIndex int) error {
-	emailFilePath := filepath.Join(getCurrentDir(), "../data/email.html")
-	spinner := NewSpinner("opening...")
-	spinner.Start()
-	defer spinner.Stop()
-
 	if err := m.db.Read(); err != nil {
 		return fmt.Errorf("failed to read database: %w", err)
 	}
@@ -475,6 +482,10 @@ func (m *MailManager) OpenEmailByAccountID(accountID string, emailIndex int) err
 	if account == nil {
 		return fmt.Errorf("account with ID %s not found", accountID)
 	}
+
+	spinner := NewSpinner("opening...")
+	spinner.Start()
+	defer spinner.Stop()
 
 	messages, err := m.fetchMessagesAPI(account.Token.Token)
 	if err != nil {
@@ -496,13 +507,10 @@ func (m *MailManager) OpenEmailByAccountID(accountID string, emailIndex int) err
 		return nil
 	}
 
-	// Write HTML file
-	dir := filepath.Dir(emailFilePath)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("failed to create directory: %w", err)
-	}
-
-	if err := os.WriteFile(emailFilePath, []byte(emailDetail.HTML[0]), 0644); err != nil {
+	// Write HTML file. Every render gets a fresh 0600 file in the user cache
+	// directory; see writeEmailHTML for why it is not deleted afterwards.
+	emailFilePath, err := writeEmailHTML(emailDetail.HTML[0])
+	if err != nil {
 		return fmt.Errorf("failed to write email file: %w", err)
 	}
 
@@ -713,13 +721,97 @@ func (m *MailManager) getEmailDetailAPI(messageID, token string) (*EmailDetail, 
 	return &result, nil
 }
 
-// getCurrentDir gets current execution directory
-func getCurrentDir() string {
-	ex, err := os.Executable()
+// emailHTMLMaxAge is how long a rendered email is kept before the next render
+// prunes it. It only needs to outlast the browser handing the file to a viewer.
+const emailHTMLMaxAge = time.Hour
+
+// emailCacheDir returns the per-user directory that holds rendered emails.
+//
+// This used to be <executable dir>/../data/email.html, which fails when the
+// install prefix is read-only (for example a Homebrew binary in
+// /opt/homebrew/bin) and leaves mail content inside the installation
+// directory. The user cache directory is always writable and is the
+// conventional home for data the program can regenerate.
+func emailCacheDir() (string, error) {
+	base, err := os.UserCacheDir()
 	if err != nil {
-		return "."
+		base = os.TempDir()
 	}
-	return filepath.Dir(ex)
+
+	dir := filepath.Join(base, "gotmail", "email")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return "", fmt.Errorf("failed to create cache directory: %w", err)
+	}
+
+	return dir, nil
+}
+
+// writeEmailHTML renders html into a fresh file in the cache directory and
+// returns its path.
+//
+// Every render gets its own file: os.CreateTemp opens with O_CREATE|O_EXCL, so
+// a symbolic link planted at a predictable name cannot redirect the write, and
+// two concurrent renders cannot clobber each other. The file is created 0600
+// because email HTML is attacker-influenced content.
+//
+// The file is deliberately not deleted afterwards. openInBrowser launches the
+// browser with exec.Start and does not wait for it, so removing the file
+// straight away would race the viewer. Instead stale renders are pruned once
+// they are older than emailHTMLMaxAge, which bounds how long message content
+// stays on disk; the rest is documented in `gotmail help open`.
+func writeEmailHTML(html string) (string, error) {
+	dir, err := emailCacheDir()
+	if err != nil {
+		return "", err
+	}
+
+	// Best effort: a stale file that cannot be removed must not fail this render.
+	cleanStaleEmailHTML(dir)
+
+	f, err := os.CreateTemp(dir, "email-*.html")
+	if err != nil {
+		return "", fmt.Errorf("failed to create email file: %w", err)
+	}
+	path := f.Name()
+
+	if _, err := f.WriteString(html); err != nil {
+		f.Close()
+		os.Remove(path)
+		return "", fmt.Errorf("failed to write email file: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(path)
+		return "", fmt.Errorf("failed to write email file: %w", err)
+	}
+
+	return path, nil
+}
+
+// cleanStaleEmailHTML removes rendered emails older than emailHTMLMaxAge.
+//
+// Errors are deliberately ignored. The cache is best-effort, and on Windows a
+// file the browser still holds open cannot be removed at all; leaving it until
+// the next render is the correct outcome there.
+func cleanStaleEmailHTML(dir string) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+
+	cutoff := time.Now().Add(-emailHTMLMaxAge)
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasPrefix(name, "email-") || !strings.HasSuffix(name, ".html") {
+			continue
+		}
+
+		info, err := entry.Info()
+		if err != nil || info.ModTime().After(cutoff) {
+			continue
+		}
+
+		os.Remove(filepath.Join(dir, name))
+	}
 }
 
 // openInBrowser opens file in browser

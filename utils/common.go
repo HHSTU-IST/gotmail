@@ -7,6 +7,7 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 )
@@ -118,11 +119,86 @@ func (db *Database) Write() error {
 		return fmt.Errorf("failed to create directory: %w", err)
 	}
 
-	if err := os.WriteFile(db.dataPath, data, 0644); err != nil {
+	if err := writeFilePrivate(db.dataPath, data, true); err != nil {
 		return fmt.Errorf("failed to write accounts file: %w", err)
 	}
 
 	return nil
+}
+
+// writeFilePrivate writes data with owner-only permissions (0600).
+//
+// os.WriteFile applies perm only when it creates the file, so a file that
+// already exists as world-readable would silently keep its mode; the explicit
+// chmod afterwards tightens those too. The accounts file holds plaintext
+// passwords and JWTs, so it must not stay readable by other users of the
+// machine.
+//
+// allowSymlink decides what happens when path is a symbolic link:
+//
+//   - true  — follow it. Used for ~/.gotmail.json, because dotfile managers
+//     (stow, chezmoi) legitimately symlink a dotfile into place and replacing
+//     the link with a real file would quietly break that setup.
+//   - false — write through a fresh file instead. Used for export files, whose
+//     final path component the program picks itself, so a link planted in the
+//     destination directory must not be able to redirect the write onto some
+//     other file the user can write to.
+//
+// chmod failure is only fatal while the file is still group- or
+// world-readable, so filesystems that cannot store POSIX modes (exFAT, some
+// network shares) do not turn a successful write into a reported failure.
+func writeFilePrivate(path string, data []byte, allowSymlink bool) error {
+	if !allowSymlink {
+		if err := replaceFilePrivate(path, data); err != nil {
+			return err
+		}
+		return nil
+	}
+
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		return err
+	}
+
+	// Windows has no POSIX mode bits; os.Chmod there only toggles the
+	// read-only attribute, which is not what this function is about.
+	if runtime.GOOS == "windows" {
+		return nil
+	}
+
+	if err := os.Chmod(path, 0600); err != nil {
+		info, statErr := os.Stat(path)
+		if statErr == nil && info.Mode().Perm()&0o077 != 0 {
+			return fmt.Errorf("failed to restrict permissions on %s (mode %#o): %w", path, info.Mode().Perm(), err)
+		}
+		fmt.Fprintf(os.Stderr, "Warning: could not restrict permissions on %s: %v\n", path, err)
+	}
+	return nil
+}
+
+// replaceFilePrivate writes data to a fresh file next to path and renames it
+// into place.
+//
+// os.CreateTemp opens with O_CREATE|O_EXCL, so it can neither follow nor reuse
+// a symbolic link planted at path, and rename replaces the destination entry
+// itself rather than writing through it. Together they close the window
+// between a check and the write that a plain lstat-then-write would leave open.
+func replaceFilePrivate(path string, data []byte) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".gotmail-tmp-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+
+	return os.Rename(tmpName, path)
 }
 
 // GetData gets all accounts data
@@ -191,20 +267,29 @@ func (db *Database) DeleteData() error {
 	return nil
 }
 
-// GenerateRandomString generates random string
-func GenerateRandomString(length int) string {
+// GenerateRandomString generates a random string drawn from [a-z0-9].
+//
+// It returns an error rather than falling back to a predictable sequence. The
+// old fallback built each character from charset[i%len(charset)], so a
+// crypto/rand failure silently produced "abcdefg..." — a guessable password
+// that was reported as a success. This function mints account credentials, so
+// failing loudly is the only safe behaviour.
+func GenerateRandomString(length int) (string, error) {
+	if length <= 0 {
+		return "", fmt.Errorf("random string length must be positive, got %d", length)
+	}
+
 	const charset = "abcdefghijklmnopqrstuvwxyz0123456789"
+	maxIndex := big.NewInt(int64(len(charset)))
 	b := make([]byte, length)
 	for i := range b {
-		num, err := rand.Int(rand.Reader, big.NewInt(int64(len(charset))))
+		num, err := rand.Int(rand.Reader, maxIndex)
 		if err != nil {
-			// If cryptographic random number generation fails, fall back to time seed
-			b[i] = charset[i%len(charset)]
-		} else {
-			b[i] = charset[num.Int64()]
+			return "", fmt.Errorf("failed to generate random string: %w", err)
 		}
+		b[i] = charset[num.Int64()]
 	}
-	return string(b)
+	return string(b), nil
 }
 
 // Spinner simple loading animation

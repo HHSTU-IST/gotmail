@@ -1,6 +1,6 @@
 # GoTMail
 
-[![Go Version](https://img.shields.io/badge/go-1.18+-blue.svg)](https://golang.org/doc/go1.18)
+[![Go Version](https://img.shields.io/badge/go-1.27+-blue.svg)](https://golang.org/doc/go1.27)
 [![Go Report Card](https://goreportcard.com/badge/github.com/ivaquero/gotmail)](https://goreportcard.com/report/github.com/ivaquero/gotmail)
 ![code size](https://img.shields.io/github/languages/code-size/ivaquero/gotmail.svg)
 ![repo size](https://img.shields.io/github/repo-size/ivaquero/gotmail.svg)
@@ -42,7 +42,7 @@ brew install gotmail
 
 > 安装完成后，运行 `xattr -r -d com.apple.quarantine $HOMEBREW_PREFIX/bin/gotmail` 以允许执行。
 
-- 备选方法（需要 Go 1.18 或更高版本）
+- 备选方法（需要 Go 1.27 或更高版本，即 CI 构建所用的工具链）
 
 ```bash
 go install github.com/ivaquero/gotmail
@@ -104,19 +104,19 @@ gotmail export /备份文件夹/
 
 ```bash
 # 查看指定账户的邮件
-gotmail msg --id abc123
+gotmail msg --id a1b2c3d4e5
 
 # 查看指定账户信息
-gotmail show --id abc123
+gotmail show --id a1b2c3d4e5
 
 # 删除指定账户
-gotmail del --id abc123
+gotmail del --id a1b2c3d4e5
 
 # 从指定账户打开特定邮件
-gotmail open 1 --id abc123
+gotmail open 1 --id a1b2c3d4e5
 
 # 导出指定账户数据
-gotmail export ./备份文件夹 --id abc123
+gotmail export ./备份文件夹 --id a1b2c3d4e5
 ```
 
 ## 📖 命令参考
@@ -126,15 +126,15 @@ gotmail export ./备份文件夹 --id abc123
 | `new`                       | 创建新的临时邮箱账户         | `gotmail new`                              |
 | `ls`                        | 列出所有账户                 | `gotmail ls`                               |
 | `msg`                       | 获取并列出所有邮件           | `gotmail msg`                              |
-| `msg --id <id>`             | 获取指定账户的邮件           | `gotmail msg --id abc123`                  |
+| `msg --id <id>`             | 获取指定账户的邮件           | `gotmail msg --id a1b2c3d4e5`                  |
 | `open <number>`             | 在浏览器中打开指定邮件       | `gotmail open 1`                           |
-| `open <number> --id <id>`   | 为指定账户打开指定邮件       | `gotmail open 1 --id abc123`               |
+| `open <number> --id <id>`   | 为指定账户打开指定邮件       | `gotmail open 1 --id a1b2c3d4e5`               |
 | `show`                      | 显示当前账户详情             | `gotmail show`                             |
-| `show --id <id>`            | 显示指定账户详情             | `gotmail show --id abc123`                 |
+| `show --id <id>`            | 显示指定账户详情             | `gotmail show --id a1b2c3d4e5`                 |
 | `del`                       | 删除当前账户                 | `gotmail del`                              |
-| `del --id <id>`             | 删除指定账户                 | `gotmail del --id abc123`                  |
+| `del --id <id>`             | 删除指定账户                 | `gotmail del --id a1b2c3d4e5`                  |
 | `export <folder>`           | 导出所有账户数据到指定文件夹 | `gotmail export backup/folder`             |
-| `export <folder> --id <id>` | 导出指定账户数据到指定文件夹 | `gotmail export backup/folder --id abc123` |
+| `export <folder> --id <id>` | 导出指定账户数据到指定文件夹 | `gotmail export backup/folder --id a1b2c3d4e5` |
 | `help`                      | 显示帮助信息                 | `gotmail help`                             |
 | `help <command>`            | 显示特定命令的详细帮助       | `gotmail help msg`                         |
 
@@ -142,7 +142,7 @@ gotmail export ./备份文件夹 --id abc123
 
 ### 环境要求
 
-- Go 1.18 或更高版本
+- Go 1.27 或更高版本（`go.mod` 仍声明 `go 1.18` 作为语言下限）
 
 ### 构建项目
 
@@ -168,7 +168,9 @@ go test ./... -v
 ## 🔒 安全特性
 
 - **加密随机数生成**：使用 `crypto/rand` 生成安全的随机字符串
-- **错误回退机制**：在加密随机数生成失败时提供回退方案
+- **失败即中止的随机数生成**：`crypto/rand` 失败时直接报错，不回退到可预测的序列
+- **仅属主可读的文件权限**：账户数据与导出文件写入权限为 `0600`，程序创建的目录为 `0700`
+- **防符号链接写入**：导出文件与缓存的邮件 HTML 先写入新文件再重命名就位，攻击者预置的符号链接无法把写入重定向到其他文件
 - **输入验证**：对 API 响应和用户输入进行验证
 - **安全的数据存储**：账户数据以 JSON 格式安全存储
 
@@ -201,10 +203,19 @@ gotmail export /path/to/backup/
 或者导出指定账户的数据：
 
 ```bash
-gotmail export /path/to/backup/ --id abc123
+gotmail export /path/to/backup/ --id a1b2c3d4e5
 ```
 
 导出的文件将是原始账户数据文件的完整副本，保留所有账户信息和格式。
+
+### 邮件渲染缓存
+
+`gotmail open` 会把邮件作为文件交给浏览器打开，而不是通过管道传给浏览器，因此每次渲染都会写入用户缓存目录：
+
+- **目录**：`<用户缓存目录>/gotmail/email` —— Linux 下为 `~/.cache/gotmail/email`，macOS 下为 `~/Library/Caches/gotmail/email`，Windows 下为 `%LocalAppData%\gotmail\email`
+- **权限**：`0600`，且每次渲染都生成独立文件，因此第二次 `open` 不会覆盖浏览器仍在显示的内容
+- **保留时间**：超过一小时的渲染文件会在下次执行 `open` 时删除。文件不会在启动浏览器后立即删除，因为该启动是异步的，立即删除会与浏览器争用
+- **注意**：该 HTML 由发件人撰写。请把缓存文件视为不可信内容；若希望它在下次清理前就消失，请自行删除
 
 ### 多账户管理
 
